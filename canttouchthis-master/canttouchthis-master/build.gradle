@@ -1,0 +1,128 @@
+apply plugin: 'java'
+
+sourceCompatibility='1.8'
+targetCompatibility='1.8'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compile 'org.xerial:sqlite-jdbc:3.20.1'
+    testCompile 'junit:junit:4.12'
+}
+
+// Production and test source sets
+sourceSets {
+    main {
+        java {
+            srcDir 'src/main'
+        }
+    }
+
+    test {
+        java {
+            srcDir 'src/test'
+        }
+    }
+}
+
+task makeAuthDB(type:Exec) {
+    outputs.file file('auth_db.sqlite')
+    commandLine 'python', 'generate_auth_db.py'
+}
+
+tasks.compileJava.dependsOn(makeAuthDB)
+
+// Test options
+test {
+    testLogging {
+        events "passed", "failed", "skipped"
+        showStandardStreams = true
+    }
+}
+
+// Remove dist folder during clean (NOTE: requires admin permissions!)
+clean.doFirst {
+    delete dist_folder
+    println("Deleting " + dist_folder)
+}
+
+// Custom build tasks
+task run_server(type:JavaExec) {
+    main = 'canttouchthis.server.ServerApp'
+    classpath = sourceSets.main.runtimeClasspath
+}
+
+task run_client(type:JavaExec) {
+    main = 'canttouchthis.client.ClientApp'
+    classpath = sourceSets.main.runtimeClasspath
+}
+
+// Copy JAR dependencies
+task copyLibsToJar(type:Copy) {
+    def toDir = "build/libs/" + dependency_jars
+
+    file(toDir).mkdirs()
+
+    from configurations.compile
+    into toDir
+}
+
+// Generate JARs
+task server_jar(type:Jar) {
+    from (sourceSets.main.output) {
+        include "**"
+        archiveName "canttouchthis-server-1.0.jar"
+    }
+
+    from ('./') {
+        include "**/assets/*"
+        include "**/*.sqlite"
+    }
+
+    manifest {
+        attributes "Main-Class" : "canttouchthis.server.ServerApp",
+
+        // Class path code from: https://oliverveits.wordpress.com/2016/11/15/how-to-build-a-lean-jar-file-with-gradle/
+        "Class-Path" : ". deps/" + configurations.compile.collect { it.getName() }.join(' deps/')
+    }
+}
+
+task client_jar(type:Jar) {
+    from (sourceSets.main.output) {
+        include "**"
+        archiveName "canttouchthis-client-1.0.jar"
+    }
+
+    from ('./') {
+        include "**/assets/*"
+        include "**/auth_db.sqlite"
+    }
+
+    manifest {
+        attributes (
+            "Main-Class" : "canttouchthis.client.ClientApp",
+
+            // Class path code from: https://oliverveits.wordpress.com/2016/11/15/how-to-build-a-lean-jar-file-with-gradle/
+            "Class-Path" : ". deps/" + configurations.compile.collect { it.getName() }.join(' deps/')
+        )
+    }
+}
+
+server_jar.dependsOn copyLibsToJar
+client_jar.dependsOn copyLibsToJar
+
+task copy_assets(type: Copy) {
+    from "assets/"
+    into dist_folder + "/assets"
+}
+
+task make_dist(type: Copy, dependsOn: [server_jar, client_jar, copy_assets]) {
+    from ("./") {
+        include "*.sqlite"
+    }
+
+    from "build/libs/"
+    into dist_folder
+}
